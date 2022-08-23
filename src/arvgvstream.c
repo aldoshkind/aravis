@@ -1432,13 +1432,65 @@ arv_gv_stream_constructed (GObject *object)
 	priv->thread_data->socket = g_socket_new (G_SOCKET_FAMILY_IPV4, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, NULL);
 	priv->thread_data->device_address = g_object_ref (device_address);
 	priv->thread_data->interface_address = g_object_ref (interface_address);
-	priv->thread_data->interface_socket_address = g_inet_socket_address_new (interface_address, 0);
 	priv->thread_data->device_socket_address = g_inet_socket_address_new (device_address, ARV_GVCP_PORT);
 	g_socket_set_blocking (priv->thread_data->socket, FALSE);
-	g_socket_bind (priv->thread_data->socket, priv->thread_data->interface_socket_address, FALSE, NULL);
+	int min_port = 1024;
+	int max_port = 65535;
+	char *min_port_str = getenv("ARV_MIN_PORT");
+	char *max_port_str = getenv("ARV_MAX_PORT");
+	if(min_port_str)
+	{
+		min_port = g_ascii_strtoll(min_port_str, NULL, 10);
+	}
+	if(max_port_str)
+	{
+		max_port = g_ascii_strtoll(max_port_str, NULL, 10);
+	}
+	gboolean bind_success = FALSE;
+	if(max_port_str && min_port_str)
+	{
+		printf("min port %d max port %d\n", min_port, max_port);
+		for(int i = min_port ; i < (max_port + 1) ; i += 1)
+		{
+			printf("try bind port %d\n", i);
+			priv->thread_data->interface_socket_address = g_inet_socket_address_new (interface_address, i);
+			bind_success = g_socket_bind (priv->thread_data->socket, priv->thread_data->interface_socket_address, FALSE, NULL);
+			printf("bind result %s\n", bind_success != FALSE ? "TRUE" : "FALSE");
+			if(bind_success == FALSE)
+			{
+				g_object_unref (priv->thread_data->interface_socket_address);
+				priv->thread_data->interface_socket_address = NULL;
+			}
+			else
+			{
+				break;
+			}
+		}
+	}
+	else
+	{
+		priv->thread_data->interface_socket_address = g_inet_socket_address_new (interface_address, 0);
+		bind_success = g_socket_bind (priv->thread_data->socket, priv->thread_data->interface_socket_address, FALSE, NULL);
+		printf("bind result %d\n", bind_success);
+	}
+	
+
+	if(bind_success == FALSE)
+	{
+		arv_stream_take_init_error (stream, g_error_new (ARV_DEVICE_ERROR, ARV_DEVICE_ERROR_PROTOCOL_ERROR,
+							"Failed to bind port"));
+
+//		g_clear_object(priv->thread_data->socket);
+//		g_clear_object(priv->thread_data->device_address);
+//		g_clear_object(priv->thread_data->interface_address);
+//		g_clear_object(priv->thread_data->device_socket_address);
+		g_clear_object (&gv_device);
+		return;
+	}
 
 	local_address = G_INET_SOCKET_ADDRESS (g_socket_get_local_address (priv->thread_data->socket, NULL));
 	priv->thread_data->stream_port = g_inet_socket_address_get_port (local_address);
+	printf("stream port is %d\n", priv->thread_data->stream_port);
 	g_object_unref (local_address);
 
 	address_bytes = g_inet_address_to_bytes (interface_address);
