@@ -634,11 +634,55 @@ arv_network_interface_is_loopback(ArvNetworkInterface *a)
 	return FALSE;
 }
 
+static guint32 get_env_guint32(const char *env_var_name, guint32 default_value)
+{
+	char *str_value = getenv(env_var_name);
+	char *end = NULL;
+	unsigned long value = 0;
+	if (!str_value)
+	{
+		arv_debug_misc("Environment variable \"%s\" not found. Using default value %d", env_var_name, default_value);
+		return default_value;
+	}
+	value = strtoul(str_value, &end, 10);
+	if (value == ULONG_MAX)
+	{
+		arv_warning_misc("Unable to parse value of environment variable \"%s\" = \"%s\" as guint32. Using default value %d",
+							env_var_name, str_value, default_value);
+		return default_value;
+	}
+	arv_debug_misc("\"%s\" value is %ld", env_var_name, value);
+	return value;
+}
+
+
 static GMutex arv_port_mutex;
 
 static guint32 arv_port_minimum = 0;
 static guint32 arv_port_maximum = 0;
 static guint32 arv_last_port_offset = 0;
+
+static guint32 get_arv_port_minimum(void)
+{
+	static int init = 0;
+	if (!init) {
+		init = 1;
+		arv_port_minimum = get_env_guint32("ARV_PORT_RANGE_MIN", arv_port_minimum);
+		arv_last_port_offset = arv_port_maximum - arv_port_minimum;
+	}
+	return arv_port_minimum;
+}
+
+static guint32 get_arv_port_maximum(void)
+{
+	static int init = 0;
+	if (!init) {
+		init = 1;
+		arv_port_maximum = get_env_guint32("ARV_PORT_RANGE_MAX", arv_port_maximum);
+		arv_last_port_offset = arv_port_maximum - arv_port_minimum;
+	}
+	return arv_port_maximum;
+}
 
 /**
  * arv_set_gv_port_range_from_string:
@@ -721,7 +765,7 @@ arv_socket_bind_with_range (GSocket *socket, GInetAddress *address, guint16 port
 
         g_mutex_lock (&arv_port_mutex);
 
-        if (port != 0 || (arv_port_minimum == 0 && arv_port_maximum == 0)) {
+        if (port != 0 || (get_arv_port_minimum() == 0 && get_arv_port_maximum() == 0)) {
                 socket_address = g_inet_socket_address_new (address, port);
 
                 success = g_socket_bind (socket, socket_address, allow_reuse, error);
@@ -733,13 +777,13 @@ arv_socket_bind_with_range (GSocket *socket, GInetAddress *address, guint16 port
                 return socket_address;
         }
 
-        for (i = 0; i <= arv_port_maximum - arv_port_minimum; i++) {
-                arv_last_port_offset = (arv_last_port_offset + 1) % (arv_port_maximum - arv_port_minimum + 1);
+        for (i = 0; i <= get_arv_port_maximum() - get_arv_port_minimum(); i++) {
+                arv_last_port_offset = (arv_last_port_offset + 1) % (get_arv_port_maximum() - get_arv_port_minimum() + 1);
 
-                arv_debug_misc ("Try port %u in range [%u..%u]", arv_port_minimum + arv_last_port_offset,
-                                arv_port_minimum, arv_port_maximum);
+                arv_debug_misc ("Try port %u in range [%u..%u]", get_arv_port_minimum() + arv_last_port_offset,
+                                get_arv_port_minimum(), get_arv_port_maximum());
 
-                socket_address = g_inet_socket_address_new (address, arv_port_minimum + arv_last_port_offset);
+                socket_address = g_inet_socket_address_new (address, get_arv_port_minimum() + arv_last_port_offset);
                 success = g_socket_bind (socket, socket_address, allow_reuse, &local_error);
                 if (success) {
                         g_mutex_unlock (&arv_port_mutex);
@@ -759,9 +803,9 @@ arv_socket_bind_with_range (GSocket *socket, GInetAddress *address, guint16 port
         }
 
         g_set_error (error, ARV_NETWORK_ERROR, ARV_NETWORK_ERROR_PORT_EXHAUSTION,
-                     "No more available port in range [%u..%u]", arv_port_minimum, arv_port_maximum);
+                     "No more available port in range [%u..%u]", get_arv_port_minimum(), get_arv_port_maximum());
 
-        arv_warning_misc ("No more port available in range [%u..%u]", arv_port_minimum, arv_port_maximum);
+        arv_warning_misc ("No more port available in range [%u..%u]", get_arv_port_minimum(), get_arv_port_maximum());
 
         g_mutex_unlock (&arv_port_mutex);
         return NULL;
